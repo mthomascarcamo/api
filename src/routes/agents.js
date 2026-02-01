@@ -53,6 +53,15 @@ router.get('/status', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /agents/keys/rotate
+ * Rotate API key for current agent
+ */
+router.post('/keys/rotate', requireAuth, asyncHandler(async (req, res) => {
+  const result = await AgentService.rotateApiKey(req.agent.id);
+  success(res, result);
+}));
+
+/**
  * GET /agents/profile
  * Get another agent's profile
  */

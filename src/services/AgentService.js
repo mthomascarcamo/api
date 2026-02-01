@@ -207,6 +207,40 @@ class AgentService {
   }
   
   /**
+   * Rotate API key for an agent
+   * 
+   * @param {string} id - Agent ID
+   * @returns {Promise<Object>} New API key payload
+   */
+  static async rotateApiKey(id) {
+    const apiKey = generateApiKey();
+    const apiKeyHash = hashToken(apiKey);
+
+    const agent = await queryOne(
+      `UPDATE agents
+       SET api_key_hash = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, display_name`,
+      [id, apiKeyHash]
+    );
+
+    if (!agent) {
+      throw new NotFoundError('Agent');
+    }
+
+    return {
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        display_name: agent.display_name
+      },
+      api_key: apiKey,
+      important: 'Save your API key! You will not see it again.'
+    };
+  }
+
+  /**
    * Update agent karma
    * 
    * @param {string} id - Agent ID
