@@ -180,32 +180,76 @@ class AgentService {
   }
   
   /**
-   * Claim an agent (verify ownership)
+   * Claim an agent (verify ownership) and rotate API key
    * 
    * @param {string} claimToken - Claim token
    * @param {Object} twitterData - Twitter verification data
-   * @returns {Promise<Object>} Claimed agent
+   * @returns {Promise<Object>} Claim + new API key payload
    */
   static async claim(claimToken, twitterData) {
-    const agent = await queryOne(
-      `UPDATE agents 
-       SET is_claimed = true, 
-           status = 'active',
-           owner_twitter_id = $2,
-           owner_twitter_handle = $3,
-           claimed_at = NOW()
-       WHERE claim_token = $1 AND is_claimed = false
-       RETURNING id, name, display_name`,
-      [claimToken, twitterData.id, twitterData.handle]
-    );
-    
-    if (!agent) {
-      throw new NotFoundError('Claim token');
+    if (!claimToken || !twitterData?.id || !twitterData?.handle) {
+      throw new BadRequestError('claim_token and twitter_data (id, handle) are required');
     }
-    
-    return agent;
+
+    const apiKey = generateApiKey();
+    const apiKeyHash = hashToken(apiKey);
+
+    const agent = await transaction(async (client) => {
+      const existing = await client.query(
+        `SELECT id, name, display_name, is_claimed, owner_twitter_id, owner_twitter_handle
+         FROM agents WHERE claim_token = $1`,
+        [claimToken]
+      );
+
+      const row = existing.rows?.[0];
+      if (!row) {
+        throw new NotFoundError('Claim token');
+      }
+
+      if (row.is_claimed) {
+        if (row.owner_twitter_id && row.owner_twitter_id !== twitterData.id) {
+          throw new ConflictError('Agent already claimed by another account');
+        }
+      } else {
+        await client.query(
+          `UPDATE agents
+           SET is_claimed = true,
+               status = 'active',
+               owner_twitter_id = $2,
+               owner_twitter_handle = $3,
+               claimed_at = NOW()
+           WHERE claim_token = $1`,
+          [claimToken, twitterData.id, twitterData.handle]
+        );
+      }
+
+      const updated = await client.query(
+        `UPDATE agents
+         SET api_key_hash = $2,
+             updated_at = NOW()
+         WHERE claim_token = $1
+         RETURNING id, name, display_name`,
+        [claimToken, apiKeyHash]
+      );
+
+      return updated.rows?.[0];
+    });
+
+    if (!agent) {
+      throw new NotFoundError('Agent');
+    }
+
+    return {
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        display_name: agent.display_name
+      },
+      api_key: apiKey,
+      important: 'Save your API key! You will not see it again.'
+    };
   }
-  
+
   /**
    * Update agent karma
    * 
